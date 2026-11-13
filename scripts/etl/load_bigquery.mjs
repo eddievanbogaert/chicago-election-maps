@@ -248,7 +248,10 @@ async function loadDemographicsFromPublicAcs() {
       ST_Y(ST_CENTROID(geo.tract_geom)) AS lat,
       acs.total_pop,
       acs.median_age,
-      acs.median_income,
+      COALESCE(
+        IF(acs.median_income > 0, acs.median_income, NULL),
+        IF(acs.income_per_capita > 0, acs.income_per_capita * 2.2, NULL)
+      ) AS median_income,
       SAFE_DIVIDE(acs.bachelors_degree_or_higher_25_64, NULLIF(acs.pop_25_64, 0)) AS pct_bachelor_plus,
       SAFE_DIVIDE(acs.hispanic_any_race, NULLIF(acs.total_pop, 0)) AS pct_hispanic,
       SAFE_DIVIDE(acs.black_pop, NULLIF(acs.total_pop, 0)) AS pct_black,
