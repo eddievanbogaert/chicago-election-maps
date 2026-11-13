@@ -205,6 +205,15 @@ async function loadJsonTable(tableId, rows, schema) {
   console.log(`Loaded ${rows.length} rows into ${tableId}`);
 }
 
+/** BigQuery ST_GEOGFROMGEOJSON rejects non-RFC members like `rewind`. */
+function cleanGeometry(geometry) {
+  if (!geometry || typeof geometry !== "object") return geometry;
+  return {
+    type: geometry.type,
+    coordinates: geometry.coordinates,
+  };
+}
+
 async function loadGeographies(year, round, geoPath) {
   const geo = JSON.parse(await readFile(geoPath, "utf8"));
   const electionId = `${year}-${round}`;
@@ -213,7 +222,8 @@ async function loadGeographies(year, round, geoPath) {
   for (const f of geo.features) {
     const ward = Number(f.properties.WARD);
     const precinct = Number(f.properties.PRECINCT);
-    const geom = JSON.stringify(f.geometry);
+    const g = cleanGeometry(f.geometry);
+    const geom = JSON.stringify(g);
     precinctRows.push({
       election_id: electionId,
       geography_level: "precinct",
@@ -222,7 +232,6 @@ async function loadGeographies(year, round, geoPath) {
       geom_geojson: geom,
     });
     if (!wardGeoms.has(ward)) wardGeoms.set(ward, []);
-    const g = f.geometry;
     if (g.type === "Polygon") wardGeoms.get(ward).push(g.coordinates);
     else wardGeoms.get(ward).push(...g.coordinates);
   }

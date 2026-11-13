@@ -1,17 +1,17 @@
-/** Distinct, print-friendly palette for election winners (avoid purple glow AI cliché). */
+/** High-contrast palette tuned for dark basemaps. */
 const CANDIDATE_PALETTE = [
-  "#0B3D5C", // deep lake blue
-  "#C45C26", // burnt orange
-  "#2F6B4F", // park green
-  "#8B1E3F", // brick
-  "#B08900", // brass
-  "#3D5A80", // steel
-  "#6B4F3A", // brownstone
-  "#1F7A8C", // teal
-  "#A63D40", // clay
-  "#4A6741", // olive
-  "#7A5C45", // taupe
-  "#245B7A", // navy mid
+  "#3DA9FC", // bright lake blue
+  "#F97316", // ember orange
+  "#34D399", // mint
+  "#FB7185", // rose
+  "#FBBF24", // amber
+  "#2DD4BF", // teal
+  "#F472B6", // pink
+  "#86EFAC", // soft green
+  "#38BDF8", // sky
+  "#FCA5A5", // soft red
+  "#67E8F9", // ice
+  "#FDBA74", // peach
 ];
 
 export function colorForCandidate(name: string, all: string[]): string {
@@ -23,14 +23,14 @@ export function legendForCandidates(names: string[]): { name: string; color: str
   return names.map((name) => ({ name, color: colorForCandidate(name, names) }));
 }
 
-/** Sequential lake→brass ramp for demographic choropleths. */
+/** Sequential cyan→amber ramp for demographic choropleths on dark maps. */
 export function demographicColor(t: number): string {
   const stops: [number, [number, number, number]][] = [
-    [0, [232, 236, 239]],
-    [0.25, [168, 198, 212]],
-    [0.5, [70, 130, 156]],
-    [0.75, [28, 74, 104]],
-    [1, [176, 137, 0]],
+    [0, [30, 41, 59]],
+    [0.25, [30, 91, 122]],
+    [0.5, [45, 160, 190]],
+    [0.75, [120, 200, 170]],
+    [1, [251, 191, 36]],
   ];
   const x = Math.min(1, Math.max(0, t));
   let i = 0;

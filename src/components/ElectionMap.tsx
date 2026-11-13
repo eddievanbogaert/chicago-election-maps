@@ -25,10 +25,10 @@ function fillColorExpr(mode: "election" | "demographics"): unknown {
   return [
     "case",
     ["==", ["get", "inactive"], true],
-    "#cfd6db",
+    "#1a222e",
     mode === "demographics"
-      ? ["coalesce", ["get", "fill"], "#9aa8b2"]
-      : ["coalesce", ["get", "winnerColor"], "#9aa8b2"],
+      ? ["coalesce", ["get", "fill"], "#334155"]
+      : ["coalesce", ["get", "winnerColor"], "#334155"],
   ];
 }
 
@@ -52,7 +52,7 @@ export function ElectionMap({ features, mode }: Props) {
           basemap: {
             type: "raster",
             tiles: [
-              "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+              "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
             ],
             tileSize: 256,
             attribution: "Tiles © Esri",
@@ -62,29 +62,36 @@ export function ElectionMap({ features, mode }: Props) {
           {
             id: "background",
             type: "background",
-            paint: { "background-color": "#d5e0e7" },
+            paint: { "background-color": "#0b0f14" },
           },
           {
             id: "basemap",
             type: "raster",
             source: "basemap",
-            paint: { "raster-opacity": 0.55 },
+            paint: { "raster-opacity": 0.72 },
           },
         ],
       },
       center: CHICAGO,
-      zoom: 9.6,
-      minZoom: 8.5,
-      maxZoom: 14,
+      zoom: 9.55,
+      minZoom: 8.2,
+      maxZoom: 15,
       attributionControl: {},
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
     });
 
-    map.addControl(new NavigationControl({ visualizePitch: false }), "bottom-right");
+    map.addControl(
+      new NavigationControl({ visualizePitch: false, showCompass: false }),
+      "bottom-right",
+    );
     popupRef.current = new Popup({
       closeButton: false,
       closeOnClick: false,
       offset: 12,
       className: "atlas-popup",
+      maxWidth: "240px",
     });
 
     const syncLayers = () => {
@@ -100,7 +107,7 @@ export function ElectionMap({ features, mode }: Props) {
           paint: {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             "fill-color": fillColorExpr(modeRef.current) as any,
-            "fill-opacity": 0.88,
+            "fill-opacity": 0.82,
           },
         });
         map.addLayer({
@@ -108,18 +115,31 @@ export function ElectionMap({ features, mode }: Props) {
           type: "line",
           source: "atlas",
           paint: {
-            "line-color": "#0b2a3a",
+            "line-color": "rgba(226, 232, 240, 0.28)",
             "line-width": [
               "interpolate",
               ["linear"],
               ["zoom"],
               9,
-              0.6,
-              13,
-              1.6,
+              0.25,
+              12,
+              0.7,
+              14,
+              1.2,
             ],
-            "line-opacity": 0.75,
+            "line-opacity": 0.9,
           },
+        });
+        map.addLayer({
+          id: "atlas-highlight",
+          type: "line",
+          source: "atlas",
+          paint: {
+            "line-color": "#f8fafc",
+            "line-width": 2,
+            "line-opacity": 0.95,
+          },
+          filter: ["==", ["get", "id"], ""],
         });
       } else {
         const source = map.getSource("atlas") as GeoJSONSource;
@@ -133,13 +153,12 @@ export function ElectionMap({ features, mode }: Props) {
       }
     };
 
-    map.on("load", syncLayers);
-
-    map.on("mousemove", "atlas-fill", (e) => {
-      map.getCanvas().style.cursor = "pointer";
-      const f = e.features?.[0];
-      if (!f || !popupRef.current) return;
-      const p = f.properties ?? {};
+    const showFeaturePopup = (
+      lngLat: { lng: number; lat: number },
+      f: GeoJSON.Feature,
+    ) => {
+      if (!popupRef.current) return;
+      const p = (f.properties ?? {}) as Record<string, unknown>;
       if (p.inactive === true || p.inactive === "true") {
         popupRef.current.remove();
         return;
@@ -149,17 +168,42 @@ export function ElectionMap({ features, mode }: Props) {
         html = `<strong>${p.name ?? `Ward ${p.ward}`}</strong><br/>${formatMetric(p)}`;
       } else {
         const share = Number(p.winnerShare || 0);
-        html = `<strong>Ward ${p.ward}</strong><br/>${
+        const pctLabel =
+          p.precinct != null && p.precinct !== ""
+            ? `Ward ${p.ward} · Pct ${p.precinct}`
+            : `Ward ${p.ward}`;
+        html = `<strong>${pctLabel}</strong><br/>${
           p.winner
             ? `${p.winner}<br/>${(share * 100).toFixed(1)}% · ${Number(p.ballots).toLocaleString()} ballots`
             : "No votes"
         }`;
       }
-      popupRef.current.setLngLat(e.lngLat).setHTML(html).addTo(map);
+      popupRef.current.setLngLat(lngLat).setHTML(html).addTo(map);
+      if (map.getLayer("atlas-highlight") && p.id != null) {
+        map.setFilter("atlas-highlight", ["==", ["get", "id"], String(p.id)]);
+      }
+    };
+
+    map.on("load", syncLayers);
+
+    map.on("mousemove", "atlas-fill", (e) => {
+      map.getCanvas().style.cursor = "pointer";
+      const f = e.features?.[0];
+      if (!f) return;
+      showFeaturePopup(e.lngLat, f as unknown as GeoJSON.Feature);
     });
     map.on("mouseleave", "atlas-fill", () => {
       map.getCanvas().style.cursor = "";
       popupRef.current?.remove();
+      if (map.getLayer("atlas-highlight")) {
+        map.setFilter("atlas-highlight", ["==", ["get", "id"], ""]);
+      }
+    });
+    // Touch: tap to inspect precincts
+    map.on("click", "atlas-fill", (e) => {
+      const f = e.features?.[0];
+      if (!f) return;
+      showFeaturePopup(e.lngLat, f as unknown as GeoJSON.Feature);
     });
 
     mapRef.current = map;
@@ -180,12 +224,53 @@ export function ElectionMap({ features, mode }: Props) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         map.setPaintProperty("atlas-fill", "fill-color", fillColorExpr(mode) as any);
       }
+      // Fit council ward / dense precinct views
+      if (features?.features?.length) {
+        const bounds = bboxOf(features);
+        if (bounds) {
+          map.fitBounds(bounds, {
+            padding: { top: 48, bottom: 120, left: 24, right: 24 },
+            maxZoom: features.features.length < 80 ? 12.5 : 11.2,
+            duration: 650,
+          });
+        }
+      }
     };
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
   }, [features, mode]);
 
   return <div ref={containerRef} className="atlas-map" aria-label="Chicago election map" />;
+}
+
+function bboxOf(
+  fc: GeoJSON.FeatureCollection,
+): [[number, number], [number, number]] | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const visit = (coords: unknown): void => {
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const x = coords[0] as number;
+      const y = coords[1] as number;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      return;
+    }
+    for (const c of coords) visit(c);
+  };
+  for (const f of fc.features) {
+    if (f.geometry) visit((f.geometry as GeoJSON.Geometry & { coordinates?: unknown }).coordinates);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return [
+    [minX, minY],
+    [maxX, maxY],
+  ];
 }
 
 function formatMetric(p: Record<string, unknown>): string {

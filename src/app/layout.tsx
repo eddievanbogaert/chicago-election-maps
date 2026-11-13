@@ -1,15 +1,15 @@
-import type { Metadata } from "next";
-import { Newsreader, Public_Sans } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { DM_Sans, Outfit } from "next/font/google";
 import "./globals.css";
 
-const newsreader = Newsreader({
-  variable: "--font-newsreader",
+const outfit = Outfit({
+  variable: "--font-outfit",
   subsets: ["latin"],
   display: "swap",
 });
 
-const publicSans = Public_Sans({
-  variable: "--font-public-sans",
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
   subsets: ["latin"],
   display: "swap",
 });
@@ -17,7 +17,14 @@ const publicSans = Public_Sans({
 export const metadata: Metadata = {
   title: "Chicago Election Atlas",
   description:
-    "Interactive maps of Chicago municipal elections (2015, 2019, 2023) and demographic explorer.",
+    "Precinct-level maps of Chicago municipal elections (2015, 2019, 2023) and ACS demographics.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#070a0f",
 };
 
 export default function RootLayout({
@@ -27,9 +34,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${newsreader.variable} ${publicSans.variable}`}>
-        {children}
-      </body>
+      <body className={`${outfit.variable} ${dmSans.variable}`}>{children}</body>
     </html>
   );
 }
