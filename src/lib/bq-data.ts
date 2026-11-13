@@ -10,10 +10,19 @@ import type {
 
 type Row = Record<string, unknown>;
 
-async function query<T extends Row>(sql: string, params?: Record<string, unknown>): Promise<T[]> {
+async function query<T extends Row>(
+  sql: string,
+  params?: Record<string, unknown>,
+  types?: Record<string, string>,
+): Promise<T[]> {
   const bq = getBigQuery();
   if (!bq) throw new Error("BigQuery is not configured");
-  const [rows] = await bq.query({ query: sql, params, location: "US" });
+  const [rows] = await bq.query({
+    query: sql,
+    params,
+    types,
+    location: "US",
+  });
   return rows as T[];
 }
 
@@ -160,7 +169,10 @@ export async function bqMap(contestId: string): Promise<MapPayload | null> {
       AND r.office = 'alderman'
       AND r.ward = @ward
     `,
-    { electionId, ward },
+    office === "mayor"
+      ? { electionId }
+      : { electionId, ward },
+    office === "mayor" ? undefined : { ward: "INT64" },
   );
 
   // Prefer ward aggregation when precinct rows are sparse; group by ward.
