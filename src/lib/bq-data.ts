@@ -1,0 +1,381 @@
+import { colorForCandidate, demographicColor, legendForCandidates } from "./colors";
+import { fq, getBigQuery } from "./bigquery";
+import type {
+  ContestSummary,
+  DemographicMetric,
+  DemographicsPayload,
+  ElectionSummary,
+  MapPayload,
+} from "./types";
+
+type Row = Record<string, unknown>;
+
+async function query<T extends Row>(
+  sql: string,
+  params?: Record<string, unknown>,
+  types?: Record<string, string>,
+): Promise<T[]> {
+  const bq = getBigQuery();
+  if (!bq) throw new Error("BigQuery is not configured");
+  const [rows] = await bq.query({
+    query: sql,
+    params,
+    types,
+    location: "US",
+  });
+  return rows as T[];
+}
+
+export async function bqElections(): Promise<ElectionSummary[]> {
+  const elections = await query<{
+    election_id: string;
+    year: number;
+    round: string;
+    label: string;
+  }>(`
+    SELECT election_id, year, round, label
+    FROM ${fq("elections")}
+    ORDER BY year, round
+  `);
+
+  const contests = await query<{
+    election_id: string;
+    office: string;
+    ward: number | null;
+    candidate_name: string;
+  }>(`
+    SELECT election_id, office, ward, candidate_name
+    FROM ${fq("candidates")}
+    ORDER BY election_id, office, ward, candidate_name
+  `);
+
+  return elections.map((e) => {
+    const rows = contests.filter((c) => c.election_id === e.election_id);
+    const mayorCandidates = rows
+      .filter((c) => c.office === "mayor")
+      .map((c) => c.candidate_name);
+    const councilWards: Record<string, string[]> = {};
+    for (const c of rows.filter((r) => r.office === "alderman" && r.ward != null)) {
+      const key = String(c.ward);
+      councilWards[key] ??= [];
+      councilWards[key].push(c.candidate_name);
+    }
+    return {
+      id: e.election_id,
+      year: e.year,
+      round: e.round as ElectionSummary["round"],
+      label: e.label,
+      mayorCandidates,
+      councilWards,
+    };
+  });
+}
+
+export async function bqContests(
+  electionId: string,
+  mode: "mayor" | "council",
+  ward?: number | null,
+): Promise<ContestSummary[]> {
+  const elections = await bqElections();
+  const election = elections.find((e) => e.id === electionId);
+  if (!election) return [];
+  if (mode === "mayor") {
+    return [
+      {
+        id: `${electionId}:mayor`,
+        electionId,
+        office: "mayor",
+        ward: null,
+        label: "Mayor",
+        candidates: election.mayorCandidates,
+      },
+    ];
+  }
+  return Object.keys(election.councilWards)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .filter((w) => (ward == null ? true : w === ward))
+    .map((w) => ({
+      id: `${electionId}:alderman:${w}`,
+      electionId,
+      office: "alderman" as const,
+      ward: w,
+      label: `Alderman — Ward ${w}`,
+      candidates: election.councilWards[String(w)] ?? [],
+    }));
+}
+
+function parseContestId(contestId: string) {
+  const [electionId, office, wardStr] = contestId.split(":");
+  return {
+    electionId: electionId!,
+    office: office === "alderman" ? ("alderman" as const) : ("mayor" as const),
+    ward: wardStr ? Number(wardStr) : null,
+  };
+}
+
+export async function bqMap(contestId: string): Promise<MapPayload | null> {
+  const { electionId, office, ward } = parseContestId(contestId);
+  const contests = await bqContests(
+    electionId,
+    office === "mayor" ? "mayor" : "council",
+    ward,
+  );
+  const contest = contests.find((c) => c.id === contestId);
+  if (!contest) return null;
+
+  const rows = await query<{
+    ward: number;
+    precinct: number | null;
+    registered: number;
+    ballots: number;
+    candidate_name: string;
+    votes: number;
+    geom_geojson: string;
+  }>(
+    office === "mayor"
+      ? `
+    SELECT
+      r.ward,
+      r.precinct,
+      r.registered_voters AS registered,
+      r.ballots_cast AS ballots,
+      r.candidate_name,
+      r.votes,
+      ST_ASGEOJSON(g.geom) AS geom_geojson
+    FROM ${fq("results")} r
+    LEFT JOIN ${fq("geographies")} g
+      ON g.election_id = r.election_id
+     AND g.ward = r.ward
+     AND g.geography_level = 'ward'
+    WHERE r.election_id = @electionId
+      AND r.office = 'mayor'
+    `
+      : `
+    SELECT
+      r.ward,
+      r.precinct,
+      r.registered_voters AS registered,
+      r.ballots_cast AS ballots,
+      r.candidate_name,
+      r.votes,
+      ST_ASGEOJSON(g.geom) AS geom_geojson
+    FROM ${fq("results")} r
+    LEFT JOIN ${fq("geographies")} g
+      ON g.election_id = r.election_id
+     AND g.ward = r.ward
+     AND g.geography_level = 'ward'
+    WHERE r.election_id = @electionId
+      AND r.office = 'alderman'
+      AND r.ward = @ward
+    `,
+    office === "mayor"
+      ? { electionId }
+      : { electionId, ward },
+    office === "mayor" ? undefined : { ward: "INT64" },
+  );
+
+  // Prefer ward aggregation when precinct rows are sparse; group by ward.
+  type Agg = {
+    ward: number;
+    registered: number;
+    ballots: number;
+    votes: Map<string, number>;
+    geom: string | null;
+  };
+  const byWard = new Map<number, Agg>();
+  for (const row of rows) {
+    let agg = byWard.get(row.ward);
+    if (!agg) {
+      agg = {
+        ward: row.ward,
+        registered: 0,
+        ballots: 0,
+        votes: new Map(),
+        geom: row.geom_geojson,
+      };
+      byWard.set(row.ward, agg);
+    }
+    // registered/ballots repeated per candidate — take max once
+    agg.registered = Math.max(agg.registered, Number(row.registered) || 0);
+    agg.ballots = Math.max(agg.ballots, Number(row.ballots) || 0);
+    agg.votes.set(
+      row.candidate_name,
+      (agg.votes.get(row.candidate_name) ?? 0) + Number(row.votes || 0),
+    );
+    if (!agg.geom && row.geom_geojson) agg.geom = row.geom_geojson;
+  }
+
+  // If join returned no geoms (precinct-level mismatch), fall back to ward geoms table.
+  if ([...byWard.values()].every((a) => !a.geom)) {
+    const geoms = await query<{ ward: number; geom_geojson: string }>(
+      `
+      SELECT ward, ST_ASGEOJSON(geom) AS geom_geojson
+      FROM ${fq("geographies")}
+      WHERE geography_level = 'ward'
+        AND election_id = @electionId
+      `,
+      { electionId },
+    );
+    for (const g of geoms) {
+      const agg = byWard.get(g.ward);
+      if (agg) agg.geom = g.geom_geojson;
+    }
+  }
+
+  const citywideVotes = new Map<string, number>();
+  let totalBallots = 0;
+  let totalRegistered = 0;
+  const features: GeoJSON.Feature[] = [];
+
+  for (const agg of byWard.values()) {
+    if (office === "alderman" && ward != null && agg.ward !== ward) continue;
+    const ranked = contest.candidates
+      .map((name) => ({ name, votes: agg.votes.get(name) ?? 0 }))
+      .map((c, _, arr) => {
+        const sum = arr.reduce((a, x) => a + x.votes, 0);
+        return { ...c, share: sum ? c.votes / sum : 0 };
+      })
+      .sort((a, b) => b.votes - a.votes);
+    const winner = ranked[0]?.votes ? ranked[0].name : null;
+    totalBallots += agg.ballots;
+    totalRegistered += agg.registered;
+    for (const c of ranked) {
+      citywideVotes.set(c.name, (citywideVotes.get(c.name) ?? 0) + c.votes);
+    }
+    if (!agg.geom) continue;
+    features.push({
+      type: "Feature",
+      geometry: JSON.parse(agg.geom) as GeoJSON.Geometry,
+      properties: {
+        id: `ward-${agg.ward}`,
+        ward: agg.ward,
+        precinct: null,
+        registered: agg.registered,
+        ballots: agg.ballots,
+        turnout: agg.registered ? agg.ballots / agg.registered : 0,
+        winner,
+        winnerShare: ranked[0]?.share ?? 0,
+        winnerColor: winner
+          ? colorForCandidate(winner, contest.candidates)
+          : "#d9dee3",
+        inactive: false,
+        candidates: ranked,
+      },
+    });
+  }
+
+  const citySum = [...citywideVotes.values()].reduce((a, b) => a + b, 0);
+  return {
+    source: "bigquery",
+    electionId,
+    contestId,
+    geography: "ward",
+    features: { type: "FeatureCollection", features },
+    legend: legendForCandidates(contest.candidates),
+    summary: {
+      totalBallots,
+      totalRegistered,
+      citywide: [...citywideVotes.entries()]
+        .map(([name, votes]) => ({
+          name,
+          votes,
+          share: citySum ? votes / citySum : 0,
+        }))
+        .sort((a, b) => b.votes - a.votes),
+    },
+  };
+}
+
+export async function bqDemographics(
+  metric: DemographicMetric,
+): Promise<DemographicsPayload> {
+  const colMap: Record<DemographicMetric, string> = {
+    medianIncome: "median_income",
+    medianAge: "median_age",
+    pctBachelorPlus: "pct_bachelor_plus",
+    pctHispanic: "pct_hispanic",
+    pctBlack: "pct_black",
+    pctWhite: "pct_white",
+    pctAsian: "pct_asian",
+    totalPop: "total_pop",
+  };
+  const col = colMap[metric];
+  const rows = await query<{
+    geo_id: string;
+    name: string;
+    ward: number | null;
+    lon: number;
+    lat: number;
+    total_pop: number;
+    median_age: number;
+    median_income: number;
+    pct_bachelor_plus: number;
+    pct_hispanic: number;
+    pct_black: number;
+    pct_white: number;
+    pct_asian: number;
+    geom_geojson: string;
+    value: number;
+  }>(
+    `
+    SELECT
+      d.geo_id,
+      d.name,
+      d.ward,
+      d.lon,
+      d.lat,
+      d.total_pop,
+      d.median_age,
+      d.median_income,
+      d.pct_bachelor_plus,
+      d.pct_hispanic,
+      d.pct_black,
+      d.pct_white,
+      d.pct_asian,
+      ST_ASGEOJSON(d.geom) AS geom_geojson,
+      d.${col} AS value
+    FROM ${fq("demographics")} d
+    WHERE d.${col} IS NOT NULL AND d.${col} >= 0
+    `,
+  );
+
+  const values = rows.map((r) => Number(r.value));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+
+  return {
+    source: "bigquery",
+    metric,
+    range: { min, max },
+    features: {
+      type: "FeatureCollection",
+      features: rows.map((r) => {
+        const t = (Number(r.value) - min) / span;
+        return {
+          type: "Feature" as const,
+          geometry: JSON.parse(r.geom_geojson) as GeoJSON.Geometry,
+          properties: {
+            geoId: r.geo_id,
+            name: r.name,
+            ward: r.ward,
+            lon: r.lon,
+            lat: r.lat,
+            totalPop: r.total_pop,
+            medianAge: r.median_age,
+            medianIncome: r.median_income,
+            pctBachelorPlus: r.pct_bachelor_plus,
+            pctHispanic: r.pct_hispanic,
+            pctBlack: r.pct_black,
+            pctWhite: r.pct_white,
+            pctAsian: r.pct_asian,
+            metric,
+            value: Number(r.value),
+            fill: demographicColor(t),
+          },
+        };
+      }),
+    },
+  };
+}
