@@ -1,0 +1,38 @@
+{
+  "name": "chicago-election-maps",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3000}",
+    "lint": "eslint",
+    "etl:sample": "node scripts/etl/build_sample.mjs",
+    "etl:bigquery": "node scripts/etl/load_bigquery.mjs",
+    "postinstall": "node scripts/copy-maplibre-worker.mjs"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^9.6.1",
+    "csv-parse": "^7.0.3",
+    "d3-scale": "^4.0.3",
+    "d3-scale-chromatic": "^3.1.1",
+    "maplibre-gl": "^6.18.0",
+    "next": "^15.5.29",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/d3-scale": "^4.0.9",
+    "@types/d3-scale-chromatic": "^3.1.0",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

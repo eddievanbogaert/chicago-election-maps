@@ -1,0 +1,8 @@
+.node_modules
+.git
+.data
+.tmp
+.env*
+*.key.json
+service-account*.json
+gcp-credentials.json

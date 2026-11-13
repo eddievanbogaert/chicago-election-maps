@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.data
+.tmp
+*.md
+!README.md
+.env*
+*.key.json
+service-account*.json
+gcp-credentials.json
+infra/terraform/.terraform
+infra/terraform/*.tfstate*
