@@ -37,6 +37,7 @@ export function AtlasApp() {
   const [error, setError] = useState<string | null>(null);
   const [entered, setEntered] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [showCommunityAreas, setShowCommunityAreas] = useState(false);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -182,6 +183,7 @@ export function AtlasApp() {
         <ElectionMap
           features={features}
           wardBoundaries={wardBoundaries}
+          showCommunityAreas={showCommunityAreas}
           mode={mode === "demographics" ? "demographics" : "election"}
         />
         {entered && pending && (
@@ -311,6 +313,7 @@ export function AtlasApp() {
                 </select>
               </label>
             )}
+
           </>
         ) : (
           <label className="atlas-field">
@@ -327,6 +330,15 @@ export function AtlasApp() {
             </select>
           </label>
         )}
+
+        <label className="atlas-toggle">
+          <input
+            type="checkbox"
+            checked={showCommunityAreas}
+            onChange={(e) => setShowCommunityAreas(e.target.checked)}
+          />
+          <span>Community area boundaries</span>
+        </label>
 
         {error && <p className="atlas-error">{error}</p>}
 
@@ -363,7 +375,10 @@ export function AtlasApp() {
               {mapData.summary.citywide.slice(0, councilCitywide ? 12 : 8).map((c) => (
                 <li key={c.name}>
                   <span>{c.name}</span>
-                  <strong>{(c.share * 100).toFixed(1)}%</strong>
+                  <span className="atlas-result-stats">
+                    <em>{c.votes.toLocaleString()}</em>
+                    <strong>{(c.share * 100).toFixed(1)}%</strong>
+                  </span>
                 </li>
               ))}
             </ol>

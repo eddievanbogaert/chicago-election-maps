@@ -16,11 +16,16 @@ setWorkerUrl("/maplibre-gl-worker.js");
 type Props = {
   features: GeoJSON.FeatureCollection | null;
   wardBoundaries?: GeoJSON.FeatureCollection | null;
+  showCommunityAreas?: boolean;
   mode: "election" | "demographics";
 };
 
 const CHICAGO: [number, number] = [-87.65, 41.84];
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+const COMMUNITY_AREAS_URL = "/geo/chicago-community-areas.geojson";
+const COMMUNITY_LABELS_URL = "/geo/chicago-community-area-labels.geojson";
+/** ~10% more transparent than the previous 0.82 fill. */
+const FILL_OPACITY = 0.72;
 
 function fillColorExpr(mode: "election" | "demographics"): unknown {
   return [
@@ -33,15 +38,23 @@ function fillColorExpr(mode: "election" | "demographics"): unknown {
   ];
 }
 
-export function ElectionMap({ features, wardBoundaries, mode }: Props) {
+export function ElectionMap({
+  features,
+  wardBoundaries,
+  showCommunityAreas = false,
+  mode,
+}: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const featuresRef = useRef(features);
   const wardsRef = useRef(wardBoundaries);
+  const communitiesRef = useRef(showCommunityAreas);
   const modeRef = useRef(mode);
+  const communityLoadedRef = useRef(false);
   featuresRef.current = features;
   wardsRef.current = wardBoundaries;
+  communitiesRef.current = showCommunityAreas;
   modeRef.current = mode;
 
   useEffect(() => {
@@ -51,6 +64,7 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
       container: containerRef.current,
       style: {
         version: 8,
+        glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
         sources: {
           basemap: {
             type: "raster",
@@ -97,6 +111,65 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
       maxWidth: "240px",
     });
 
+    const ensureCommunityLayers = () => {
+      if (map.getSource("communities")) return;
+      map.addSource("communities", { type: "geojson", data: EMPTY });
+      map.addSource("community-labels", { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "community-boundaries",
+        type: "line",
+        source: "communities",
+        layout: { visibility: "none" },
+        paint: {
+          "line-color": "rgba(186, 230, 253, 0.55)",
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            0.6,
+            12,
+            1.1,
+            14,
+            1.5,
+          ],
+          "line-dasharray": [1.2, 1.6],
+          "line-opacity": 0.85,
+        },
+      });
+      map.addLayer({
+        id: "community-labels",
+        type: "symbol",
+        source: "community-labels",
+        layout: {
+          visibility: "none",
+          "text-field": ["get", "name"],
+          "text-font": ["Noto Sans Regular"],
+          "text-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            9,
+            11,
+            10.5,
+            13,
+            12,
+          ],
+          "text-max-width": 8,
+          "text-padding": 2,
+          "text-allow-overlap": false,
+          "symbol-sort-key": ["length", ["get", "name"]],
+        },
+        paint: {
+          "text-color": "rgba(226, 232, 240, 0.78)",
+          "text-halo-color": "rgba(7, 10, 15, 0.75)",
+          "text-halo-width": 1.2,
+          "text-opacity": 0.9,
+        },
+      });
+    };
+
     const syncLayers = () => {
       if (!map.getSource("atlas")) {
         map.addSource("atlas", {
@@ -114,7 +187,7 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
           paint: {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             "fill-color": fillColorExpr(modeRef.current) as any,
-            "fill-opacity": 0.82,
+            "fill-opacity": FILL_OPACITY,
           },
         });
         map.addLayer({
@@ -137,7 +210,6 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
             "line-opacity": 0.85,
           },
         });
-        // Ward boundaries sit above precinct fills/lines for clear structure.
         map.addLayer({
           id: "ward-boundaries",
           type: "line",
@@ -158,6 +230,7 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
             "line-opacity": 0.95,
           },
         });
+        ensureCommunityLayers();
         map.addLayer({
           id: "atlas-highlight",
           type: "line",
@@ -239,6 +312,7 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
     return () => {
       map.remove();
       mapRef.current = null;
+      communityLoadedRef.current = false;
     };
   }, []);
 
@@ -254,8 +328,8 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
       if (map.getLayer("atlas-fill")) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         map.setPaintProperty("atlas-fill", "fill-color", fillColorExpr(mode) as any);
+        map.setPaintProperty("atlas-fill", "fill-opacity", FILL_OPACITY);
       }
-      // Hide ward outlines on demographics (tracts); show for election maps.
       if (map.getLayer("ward-boundaries")) {
         map.setLayoutProperty(
           "ward-boundaries",
@@ -277,6 +351,110 @@ export function ElectionMap({ features, wardBoundaries, mode }: Props) {
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
   }, [features, wardBoundaries, mode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const setVisibility = (visible: boolean) => {
+      const vis = visible ? "visible" : "none";
+      if (map.getLayer("community-boundaries")) {
+        map.setLayoutProperty("community-boundaries", "visibility", vis);
+      }
+      if (map.getLayer("community-labels")) {
+        map.setLayoutProperty("community-labels", "visibility", vis);
+      }
+    };
+
+    const apply = async () => {
+      if (!map.getSource("communities")) {
+        map.addSource("communities", { type: "geojson", data: EMPTY });
+        map.addSource("community-labels", { type: "geojson", data: EMPTY });
+        if (!map.getLayer("community-boundaries")) {
+          const before = map.getLayer("atlas-highlight")
+            ? "atlas-highlight"
+            : undefined;
+          map.addLayer(
+            {
+              id: "community-boundaries",
+              type: "line",
+              source: "communities",
+              layout: { visibility: "none" },
+              paint: {
+                "line-color": "rgba(186, 230, 253, 0.55)",
+                "line-width": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  9,
+                  0.6,
+                  12,
+                  1.1,
+                  14,
+                  1.5,
+                ],
+                "line-dasharray": [1.2, 1.6],
+                "line-opacity": 0.85,
+              },
+            },
+            before,
+          );
+          map.addLayer(
+            {
+              id: "community-labels",
+              type: "symbol",
+              source: "community-labels",
+              layout: {
+                visibility: "none",
+                "text-field": ["get", "name"],
+                "text-font": ["Noto Sans Regular"],
+                "text-size": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  9,
+                  9,
+                  11,
+                  10.5,
+                  13,
+                  12,
+                ],
+                "text-max-width": 8,
+                "text-padding": 2,
+                "text-allow-overlap": false,
+              },
+              paint: {
+                "text-color": "rgba(226, 232, 240, 0.78)",
+                "text-halo-color": "rgba(7, 10, 15, 0.75)",
+                "text-halo-width": 1.2,
+                "text-opacity": 0.9,
+              },
+            },
+            before,
+          );
+        }
+      }
+
+      if (!showCommunityAreas) {
+        setVisibility(false);
+        return;
+      }
+
+      if (!communityLoadedRef.current) {
+        const [areas, labels] = await Promise.all([
+          fetch(COMMUNITY_AREAS_URL).then((r) => r.json()),
+          fetch(COMMUNITY_LABELS_URL).then((r) => r.json()),
+        ]);
+        (map.getSource("communities") as GeoJSONSource).setData(areas);
+        (map.getSource("community-labels") as GeoJSONSource).setData(labels);
+        communityLoadedRef.current = true;
+      }
+      setVisibility(true);
+    };
+
+    if (map.isStyleLoaded()) void apply();
+    else map.once("load", () => void apply());
+  }, [showCommunityAreas]);
 
   return <div ref={containerRef} className="atlas-map" aria-label="Chicago election map" />;
 }
