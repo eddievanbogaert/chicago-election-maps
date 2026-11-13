@@ -14,8 +14,11 @@
   --accent-2: #f97316;
   --good: #34d399;
   --danger: #fb7185;
-  --font-display: var(--font-outfit), "Segoe UI", sans-serif;
-  --font-ui: var(--font-dm-sans), "Segoe UI", sans-serif;
+  /* Fallbacks keep a sans stack if next/font vars are not ready yet (avoids Times FOUC). */
+  --font-display: var(--font-outfit, ui-sans-serif), var(--font-dm-sans, ui-sans-serif),
+    system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-ui: var(--font-dm-sans, ui-sans-serif), system-ui, -apple-system, "Segoe UI",
+    sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -42,6 +45,8 @@ body {
     linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 55%, #05070b 100%);
   color: var(--ink);
   font-family: var(--font-ui);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -138,7 +143,7 @@ body {
   margin: 0 0 0.7rem;
   font-family: var(--font-display);
   font-size: clamp(2.05rem, 6.5vw, 3.35rem);
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: -0.035em;
   line-height: 0.95;
   color: #f8fafc;
@@ -265,7 +270,7 @@ body {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.45rem;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 
@@ -348,7 +353,7 @@ body {
   margin: 0 0 0.4rem;
   font-family: var(--font-display);
   font-size: 1rem;
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .atlas-muted,

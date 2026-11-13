@@ -52,6 +52,8 @@ export interface MapPayload {
   contestId: string;
   geography: "ward" | "precinct";
   features: GeoJSON.FeatureCollection;
+  /** Ward outlines drawn above precinct fills (empty when unavailable). */
+  wardBoundaries: GeoJSON.FeatureCollection;
   legend: { name: string; color: string }[];
   summary: {
     totalBallots: number;

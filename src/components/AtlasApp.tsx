@@ -115,8 +115,9 @@ export function AtlasApp() {
 
   const features =
     mode === "demographics" ? (demoData?.features ?? null) : (mapData?.features ?? null);
+  const wardBoundaries =
+    mode === "demographics" ? null : (mapData?.wardBoundaries ?? null);
   const legend = mode === "demographics" ? null : (mapData?.legend ?? null);
-  const sourceLabel = mode === "demographics" ? demoData?.source : mapData?.source;
   const geographyLabel =
     mode === "demographics"
       ? "census tracts"
@@ -166,6 +167,7 @@ export function AtlasApp() {
       >
         <ElectionMap
           features={features}
+          wardBoundaries={wardBoundaries}
           mode={mode === "demographics" ? "demographics" : "election"}
         />
         {entered && pending && (
@@ -195,11 +197,9 @@ export function AtlasApp() {
           >
             Explore the map
           </button>
-          {backend === "bigquery" ? (
-            <span className="atlas-source-chip">Live BigQuery · precincts</span>
-          ) : (
-            <span className="atlas-source-chip">Offline sample mode</span>
-          )}
+          <span className="atlas-source-chip">
+            {backend === "sample" ? "Sample preview data" : "Precinct returns · live"}
+          </span>
         </div>
       </header>
 
@@ -371,8 +371,9 @@ export function AtlasApp() {
 
         <footer className="atlas-foot">
           <p>
-            Chicago Board of Elections precinct returns · {geographyLabel} ·{" "}
-            {sourceLabel ?? backend}
+            {mode === "demographics"
+              ? "U.S. Census ACS 5-year estimates · Chicago tracts"
+              : `Chicago Board of Elections · ${geographyLabel} with ward boundaries`}
           </p>
         </footer>
       </aside>

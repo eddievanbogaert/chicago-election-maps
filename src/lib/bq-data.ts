@@ -114,6 +114,46 @@ function parseContestId(contestId: string) {
   };
 }
 
+const EMPTY_FC: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+async function bqWardBoundaries(
+  electionId: string,
+  ward?: number | null,
+): Promise<GeoJSON.FeatureCollection> {
+  const rows = await query<{ ward: number; geom_geojson: string }>(
+    ward == null
+      ? `
+    SELECT ward, ST_ASGEOJSON(ST_SIMPLIFY(geom, 12)) AS geom_geojson
+    FROM ${fq("geographies")}
+    WHERE election_id = @electionId
+      AND geography_level = 'ward'
+      AND geom IS NOT NULL
+    `
+      : `
+    SELECT ward, ST_ASGEOJSON(ST_SIMPLIFY(geom, 8)) AS geom_geojson
+    FROM ${fq("geographies")}
+    WHERE election_id = @electionId
+      AND geography_level = 'ward'
+      AND ward = @ward
+      AND geom IS NOT NULL
+    `,
+    ward == null ? { electionId } : { electionId, ward },
+    ward == null ? undefined : { ward: "INT64" },
+  );
+
+  return {
+    type: "FeatureCollection",
+    features: rows.map((r) => ({
+      type: "Feature" as const,
+      geometry: JSON.parse(r.geom_geojson) as GeoJSON.Geometry,
+      properties: { ward: r.ward, id: `ward-boundary-${r.ward}` },
+    })),
+  };
+}
+
 export async function bqMap(contestId: string): Promise<MapPayload | null> {
   const { electionId, office, ward } = parseContestId(contestId);
   const contests = await bqContests(
@@ -262,12 +302,18 @@ export async function bqMap(contestId: string): Promise<MapPayload | null> {
   }
 
   const citySum = [...citywideVotes.values()].reduce((a, b) => a + b, 0);
+  const wardBoundaries = await bqWardBoundaries(
+    electionId,
+    office === "alderman" ? ward : null,
+  ).catch(() => EMPTY_FC);
+
   return {
     source: "bigquery",
     electionId,
     contestId,
     geography: "precinct",
     features: { type: "FeatureCollection", features },
+    wardBoundaries,
     legend: legendForCandidates(contest.candidates),
     summary: {
       totalBallots,
@@ -410,12 +456,26 @@ async function bqMapWardFallback(
   }
 
   const citySum = [...citywideVotes.values()].reduce((a, b) => a + b, 0);
+  // When fills are already ward polygons, reuse their outlines as boundaries.
+  const wardBoundaries: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: features.map((f) => ({
+      type: "Feature" as const,
+      geometry: f.geometry,
+      properties: {
+        ward: f.properties?.ward ?? null,
+        id: `ward-boundary-${f.properties?.ward ?? ""}`,
+      },
+    })),
+  };
+
   return {
     source: "bigquery",
     electionId,
     contestId,
     geography: "ward",
     features: { type: "FeatureCollection", features },
+    wardBoundaries,
     legend: legendForCandidates(contest.candidates),
     summary: {
       totalBallots,

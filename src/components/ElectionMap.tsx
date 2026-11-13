@@ -15,6 +15,7 @@ setWorkerUrl("/maplibre-gl-worker.js");
 
 type Props = {
   features: GeoJSON.FeatureCollection | null;
+  wardBoundaries?: GeoJSON.FeatureCollection | null;
   mode: "election" | "demographics";
 };
 
@@ -32,13 +33,15 @@ function fillColorExpr(mode: "election" | "demographics"): unknown {
   ];
 }
 
-export function ElectionMap({ features, mode }: Props) {
+export function ElectionMap({ features, wardBoundaries, mode }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const featuresRef = useRef(features);
+  const wardsRef = useRef(wardBoundaries);
   const modeRef = useRef(mode);
   featuresRef.current = features;
+  wardsRef.current = wardBoundaries;
   modeRef.current = mode;
 
   useEffect(() => {
@@ -100,6 +103,10 @@ export function ElectionMap({ features, mode }: Props) {
           type: "geojson",
           data: featuresRef.current ?? EMPTY,
         });
+        map.addSource("wards", {
+          type: "geojson",
+          data: wardsRef.current ?? EMPTY,
+        });
         map.addLayer({
           id: "atlas-fill",
           type: "fill",
@@ -115,19 +122,40 @@ export function ElectionMap({ features, mode }: Props) {
           type: "line",
           source: "atlas",
           paint: {
-            "line-color": "rgba(226, 232, 240, 0.28)",
+            "line-color": "rgba(226, 232, 240, 0.22)",
             "line-width": [
               "interpolate",
               ["linear"],
               ["zoom"],
               9,
-              0.25,
+              0.2,
               12,
-              0.7,
+              0.55,
               14,
-              1.2,
+              0.9,
             ],
-            "line-opacity": 0.9,
+            "line-opacity": 0.85,
+          },
+        });
+        // Ward boundaries sit above precinct fills/lines for clear structure.
+        map.addLayer({
+          id: "ward-boundaries",
+          type: "line",
+          source: "wards",
+          paint: {
+            "line-color": "rgba(248, 250, 252, 0.88)",
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              9,
+              1.1,
+              11,
+              1.7,
+              13,
+              2.4,
+            ],
+            "line-opacity": 0.95,
           },
         });
         map.addLayer({
@@ -144,6 +172,8 @@ export function ElectionMap({ features, mode }: Props) {
       } else {
         const source = map.getSource("atlas") as GeoJSONSource;
         source.setData(featuresRef.current ?? EMPTY);
+        const wards = map.getSource("wards") as GeoJSONSource | undefined;
+        wards?.setData(wardsRef.current ?? EMPTY);
         map.setPaintProperty(
           "atlas-fill",
           "fill-color",
@@ -199,7 +229,6 @@ export function ElectionMap({ features, mode }: Props) {
         map.setFilter("atlas-highlight", ["==", ["get", "id"], ""]);
       }
     });
-    // Touch: tap to inspect precincts
     map.on("click", "atlas-fill", (e) => {
       const f = e.features?.[0];
       if (!f) return;
@@ -220,11 +249,20 @@ export function ElectionMap({ features, mode }: Props) {
       if (!map.getSource("atlas")) return;
       const source = map.getSource("atlas") as GeoJSONSource;
       source.setData(features ?? EMPTY);
+      const wards = map.getSource("wards") as GeoJSONSource | undefined;
+      wards?.setData(wardBoundaries ?? EMPTY);
       if (map.getLayer("atlas-fill")) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         map.setPaintProperty("atlas-fill", "fill-color", fillColorExpr(mode) as any);
       }
-      // Fit council ward / dense precinct views
+      // Hide ward outlines on demographics (tracts); show for election maps.
+      if (map.getLayer("ward-boundaries")) {
+        map.setLayoutProperty(
+          "ward-boundaries",
+          "visibility",
+          mode === "demographics" ? "none" : "visible",
+        );
+      }
       if (features?.features?.length) {
         const bounds = bboxOf(features);
         if (bounds) {
@@ -238,7 +276,7 @@ export function ElectionMap({ features, mode }: Props) {
     };
     if (map.isStyleLoaded()) apply();
     else map.once("load", apply);
-  }, [features, mode]);
+  }, [features, wardBoundaries, mode]);
 
   return <div ref={containerRef} className="atlas-map" aria-label="Chicago election map" />;
 }

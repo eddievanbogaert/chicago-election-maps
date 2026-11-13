@@ -178,6 +178,17 @@ export async function sampleMap(contestId: string): Promise<MapPayload | null> {
     contestId,
     geography: "ward",
     features: { type: "FeatureCollection", features },
+    wardBoundaries: {
+      type: "FeatureCollection",
+      features: features.map((f) => ({
+        type: "Feature" as const,
+        geometry: f.geometry,
+        properties: {
+          ward: f.properties?.ward ?? null,
+          id: `ward-boundary-${f.properties?.ward ?? ""}`,
+        },
+      })),
+    },
     legend: legendForCandidates(candidates),
     summary: { totalBallots, totalRegistered, citywide },
   };
