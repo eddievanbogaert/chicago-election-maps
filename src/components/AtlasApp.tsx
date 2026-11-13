@@ -141,11 +141,24 @@ export function AtlasApp() {
     setPanelOpen(true);
   };
 
+  // Once real map data arrives, allow a single tap on the map canvas to enter.
+  useEffect(() => {
+    if (entered || !features?.features?.length) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") enter();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [entered, features]);
+
   return (
     <div
       className={`atlas-shell ${entered ? "is-entered" : ""} ${panelOpen ? "is-panel-open" : "is-panel-collapsed"}`}
     >
-      <div className="atlas-map-plane">
+      <div
+        className="atlas-map-plane"
+        onPointerDownCapture={!entered ? enter : undefined}
+      >
         <ElectionMap
           features={features}
           mode={mode === "demographics" ? "demographics" : "election"}
@@ -160,7 +173,15 @@ export function AtlasApp() {
           demographics on a dark, mobile-ready map.
         </p>
         <div className="atlas-cta-row">
-          <button type="button" className="atlas-cta" onClick={enter}>
+          <button
+            type="button"
+            className="atlas-cta"
+            onClick={enter}
+            onPointerUp={(e) => {
+              e.stopPropagation();
+              enter();
+            }}
+          >
             Explore the map
           </button>
           {backend === "bigquery" ? (
