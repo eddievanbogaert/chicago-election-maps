@@ -249,7 +249,7 @@ async function loadDemographicsFromPublicAcs() {
       acs.total_pop,
       acs.median_age,
       acs.median_income,
-      SAFE_DIVIDE(acs.bachelor_degree + acs.masters_degree + acs.professional_school_degree + acs.doctorate_degree, NULLIF(acs.total_pop, 0)) AS pct_bachelor_plus,
+      SAFE_DIVIDE(acs.bachelors_degree_or_higher_25_64, NULLIF(acs.pop_25_64, 0)) AS pct_bachelor_plus,
       SAFE_DIVIDE(acs.hispanic_any_race, NULLIF(acs.total_pop, 0)) AS pct_hispanic,
       SAFE_DIVIDE(acs.black_pop, NULLIF(acs.total_pop, 0)) AS pct_black,
       SAFE_DIVIDE(acs.white_pop, NULLIF(acs.total_pop, 0)) AS pct_white,
@@ -328,8 +328,9 @@ await bq.query({
       geography_level,
       ward,
       precinct,
-      ST_GEOGFROMGEOJSON(geom_geojson, make_valid => TRUE) AS geom
+      SAFE.ST_GEOGFROMGEOJSON(geom_geojson) AS geom
     FROM \`${PROJECT}.${DATASET}.geographies_raw\`
+    WHERE SAFE.ST_GEOGFROMGEOJSON(geom_geojson) IS NOT NULL
   `,
   location: "US",
 });
