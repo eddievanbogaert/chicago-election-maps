@@ -26,7 +26,8 @@ export function AtlasApp() {
   const [elections, setElections] = useState<ElectionSummary[]>([]);
   const [electionId, setElectionId] = useState<string>("2023-runoff");
   const [mode, setMode] = useState<AtlasMode>("mayor");
-  const [ward, setWard] = useState<number>(1);
+  /** null = citywide council view until a ward is chosen */
+  const [ward, setWard] = useState<number | null>(null);
   const [contests, setContests] = useState<ContestSummary[]>([]);
   const [contestId, setContestId] = useState<string>("");
   const [mapData, setMapData] = useState<MapPayload | null>(null);
@@ -61,13 +62,21 @@ export function AtlasApp() {
 
   useEffect(() => {
     if (!electionId || mode === "demographics") return;
+
+    // Council citywide: synthetic contest id, no ward filter.
+    if (mode === "council" && ward == null) {
+      setContests([]);
+      setContestId(`${electionId}:alderman`);
+      return;
+    }
+
     startTransition(() => {
       void (async () => {
         const qs = new URLSearchParams({
           electionId,
           mode: mode === "council" ? "council" : "mayor",
         });
-        if (mode === "council") qs.set("ward", String(ward));
+        if (mode === "council" && ward != null) qs.set("ward", String(ward));
         const res = await fetch(`/api/contests?${qs}`);
         const data = await res.json();
         const list: ContestSummary[] = data.contests ?? [];
@@ -105,7 +114,6 @@ export function AtlasApp() {
           return;
         }
         const payload = (await res.json()) as MapPayload;
-        // Ignore stale responses if the user switched contests mid-flight.
         if (payload.contestId !== requested) return;
         setMapData(payload);
         setError(null);
@@ -124,6 +132,7 @@ export function AtlasApp() {
       : mapData?.geography === "precinct"
         ? "precincts"
         : "wards";
+  const councilCitywide = mode === "council" && ward == null;
 
   const election = useMemo(
     () => elections.find((e) => e.id === electionId) ?? null,
@@ -137,9 +146,10 @@ export function AtlasApp() {
       .sort((a, b) => a - b);
   }, [election]);
 
+  // Drop a stale ward if it isn't on this election's council slate.
   useEffect(() => {
-    if (!wardOptions.length) return;
-    if (!wardOptions.includes(ward)) setWard(wardOptions[0]!);
+    if (ward == null || !wardOptions.length) return;
+    if (!wardOptions.includes(ward)) setWard(null);
   }, [wardOptions, ward]);
 
   const enter = () => {
@@ -147,7 +157,11 @@ export function AtlasApp() {
     setPanelOpen(true);
   };
 
-  // Once real map data arrives, allow a single tap on the map canvas to enter.
+  const selectMode = (next: AtlasMode) => {
+    setMode(next);
+    if (next === "council") setWard(null);
+  };
+
   useEffect(() => {
     if (entered || !features?.features?.length) return;
     const onKey = (e: KeyboardEvent) => {
@@ -179,27 +193,29 @@ export function AtlasApp() {
       </div>
 
       <header className="atlas-hero-overlay">
-        <p className="atlas-brand">Chicago Election Atlas</p>
-        <h1>Precinct-level results for mayor and council.</h1>
-        <p className="atlas-lede">
-          2015, 2019, and 2023 municipal generals and runoffs — plus ACS
-          demographics on a dark, mobile-ready map.
-        </p>
-        <div className="atlas-cta-row">
-          <button
-            type="button"
-            className="atlas-cta"
-            onClick={enter}
-            onPointerUp={(e) => {
-              e.stopPropagation();
-              enter();
-            }}
-          >
-            Explore the map
-          </button>
-          <span className="atlas-source-chip">
-            {backend === "sample" ? "Sample preview data" : "Precinct returns · live"}
-          </span>
+        <div className="atlas-hero-copy">
+          <p className="atlas-brand">Chicago Election Atlas</p>
+          <h1>Precinct-level results for mayor and council.</h1>
+          <p className="atlas-lede">
+            2015, 2019, and 2023 municipal generals and runoffs — plus ACS
+            demographics on a dark, mobile-ready map.
+          </p>
+          <div className="atlas-cta-row">
+            <button
+              type="button"
+              className="atlas-cta"
+              onClick={enter}
+              onPointerUp={(e) => {
+                e.stopPropagation();
+                enter();
+              }}
+            >
+              Explore the map
+            </button>
+            <span className="atlas-source-chip">
+              {backend === "sample" ? "Sample preview data" : "Precinct returns · live"}
+            </span>
+          </div>
         </div>
       </header>
 
@@ -219,8 +235,8 @@ export function AtlasApp() {
         <header className="atlas-panel-head">
           <h2>Explore</h2>
           <p>
-            Tap a precinct for the winner. Council races zoom to the selected
-            ward.
+            Tap a precinct for the winner. Council starts citywide — choose a
+            ward to zoom into that race.
           </p>
         </header>
 
@@ -238,7 +254,7 @@ export function AtlasApp() {
               role="tab"
               aria-selected={mode === id}
               className={mode === id ? "is-active" : ""}
-              onClick={() => setMode(id)}
+              onClick={() => selectMode(id)}
             >
               {label}
             </button>
@@ -265,9 +281,12 @@ export function AtlasApp() {
               <label className="atlas-field">
                 <span>Ward</span>
                 <select
-                  value={ward}
-                  onChange={(e) => setWard(Number(e.target.value))}
+                  value={ward == null ? "" : String(ward)}
+                  onChange={(e) =>
+                    setWard(e.target.value === "" ? null : Number(e.target.value))
+                  }
                 >
+                  <option value="">All wards</option>
                   {wardOptions.map((w) => (
                     <option key={w} value={w}>
                       Ward {w}
@@ -320,7 +339,13 @@ export function AtlasApp() {
 
         {mode !== "demographics" && mapData && !pending && (
           <div className="atlas-summary">
-            <h3>{mode === "council" ? `Ward ${ward}` : "Citywide"}</h3>
+            <h3>
+              {mode === "council"
+                ? councilCitywide
+                  ? "Citywide council"
+                  : `Ward ${ward}`
+                : "Citywide"}
+            </h3>
             <p className="atlas-muted">
               {mapData.summary.totalBallots.toLocaleString()} ballots
               {mapData.summary.totalRegistered
@@ -328,8 +353,14 @@ export function AtlasApp() {
                 : ""}
               {` · ${mapData.features.features.length.toLocaleString()} ${geographyLabel}`}
             </p>
+            {councilCitywide && (
+              <p className="atlas-note">
+                Colored by each ward’s race winner. Choose a ward for the full
+                ballot.
+              </p>
+            )}
             <ol className="atlas-results">
-              {mapData.summary.citywide.slice(0, 8).map((c) => (
+              {mapData.summary.citywide.slice(0, councilCitywide ? 12 : 8).map((c) => (
                 <li key={c.name}>
                   <span>{c.name}</span>
                   <strong>{(c.share * 100).toFixed(1)}%</strong>
@@ -354,7 +385,7 @@ export function AtlasApp() {
           </div>
         )}
 
-        {legend && (
+        {legend && !councilCitywide && (
           <div className="atlas-legend">
             <h3>Winner</h3>
             <ul>

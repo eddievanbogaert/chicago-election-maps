@@ -88,14 +88,11 @@ export async function sampleMap(contestId: string): Promise<MapPayload | null> {
   const electionResults = results[electionId];
   if (!election || !electionResults) return null;
 
-  const candidates =
-    office === "mayor"
-      ? election.mayorCandidates
-      : (election.councilWards[String(ward)] ?? []);
-
   const citywideVotes = new Map<string, number>();
   let totalBallots = 0;
   let totalRegistered = 0;
+  const legendNames: string[] = [];
+  const wardSummaries: { name: string; votes: number; share: number }[] = [];
 
   const features: GeoJSON.Feature[] = [];
 
@@ -126,6 +123,11 @@ export async function sampleMap(contestId: string): Promise<MapPayload | null> {
       continue;
     }
 
+    const candidates =
+      office === "mayor"
+        ? election.mayorCandidates
+        : (election.councilWards[String(w)] ?? Object.keys(row.votes));
+
     const candVotes = candidates.map((name) => ({
       name,
       votes: row.votes[name] ?? 0,
@@ -139,8 +141,19 @@ export async function sampleMap(contestId: string): Promise<MapPayload | null> {
 
     totalBallots += row.ballots;
     totalRegistered += row.registered;
-    for (const c of ranked) {
-      citywideVotes.set(c.name, (citywideVotes.get(c.name) ?? 0) + c.votes);
+    if (office === "alderman" && ward == null) {
+      if (winner && ranked[0]) {
+        wardSummaries.push({
+          name: `Ward ${w} · ${winner}`,
+          votes: ranked[0].votes,
+          share: winnerShare,
+        });
+        if (!legendNames.includes(winner)) legendNames.push(winner);
+      }
+    } else {
+      for (const c of ranked) {
+        citywideVotes.set(c.name, (citywideVotes.get(c.name) ?? 0) + c.votes);
+      }
     }
 
     features.push({
@@ -164,13 +177,25 @@ export async function sampleMap(contestId: string): Promise<MapPayload | null> {
   }
 
   const citySum = [...citywideVotes.values()].reduce((a, b) => a + b, 0);
-  const citywide = [...citywideVotes.entries()]
-    .map(([name, votes]) => ({
-      name,
-      votes,
-      share: citySum ? votes / citySum : 0,
-    }))
-    .sort((a, b) => b.votes - a.votes);
+  const citywide =
+    office === "alderman" && ward == null
+      ? wardSummaries.sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { numeric: true }),
+        )
+      : [...citywideVotes.entries()]
+          .map(([name, votes]) => ({
+            name,
+            votes,
+            share: citySum ? votes / citySum : 0,
+          }))
+          .sort((a, b) => b.votes - a.votes);
+
+  const legendCandidates =
+    office === "mayor"
+      ? election.mayorCandidates
+      : ward == null
+        ? legendNames
+        : (election.councilWards[String(ward)] ?? []);
 
   return {
     source: "sample",
@@ -189,7 +214,7 @@ export async function sampleMap(contestId: string): Promise<MapPayload | null> {
         },
       })),
     },
-    legend: legendForCandidates(candidates),
+    legend: legendForCandidates(legendCandidates),
     summary: { totalBallots, totalRegistered, citywide },
   };
 }

@@ -156,6 +156,12 @@ async function bqWardBoundaries(
 
 export async function bqMap(contestId: string): Promise<MapPayload | null> {
   const { electionId, office, ward } = parseContestId(contestId);
+
+  // Citywide council: all alderman races on one map until a ward is chosen.
+  if (office === "alderman" && ward == null) {
+    return bqCouncilCitywide(electionId, contestId);
+  }
+
   const contests = await bqContests(
     electionId,
     office === "mayor" ? "mayor" : "council",
@@ -326,6 +332,308 @@ export async function bqMap(contestId: string): Promise<MapPayload | null> {
         }))
         .sort((a, b) => b.votes - a.votes),
     },
+  };
+}
+
+async function bqCouncilCitywide(
+  electionId: string,
+  contestId: string,
+): Promise<MapPayload | null> {
+  const elections = await bqElections();
+  const election = elections.find((e) => e.id === electionId);
+  if (!election) return null;
+
+  const rows = await query<{
+    ward: number;
+    precinct: number | null;
+    registered: number;
+    ballots: number;
+    candidate_name: string;
+    votes: number;
+    geom_geojson: string | null;
+  }>(
+    `
+    SELECT
+      r.ward,
+      r.precinct,
+      r.registered_voters AS registered,
+      r.ballots_cast AS ballots,
+      r.candidate_name,
+      r.votes,
+      ST_ASGEOJSON(ST_SIMPLIFY(g.geom, 8)) AS geom_geojson
+    FROM ${fq("results")} r
+    LEFT JOIN ${fq("geographies")} g
+      ON g.election_id = r.election_id
+     AND g.ward = r.ward
+     AND g.precinct = r.precinct
+     AND g.geography_level = 'precinct'
+    WHERE r.election_id = @electionId
+      AND r.office = 'alderman'
+    `,
+    { electionId },
+  );
+
+  type Agg = {
+    ward: number;
+    precinct: number;
+    registered: number;
+    ballots: number;
+    votes: Map<string, number>;
+    geom: string | null;
+  };
+  const byPrecinct = new Map<string, Agg>();
+  for (const row of rows) {
+    if (row.precinct == null) continue;
+    const key = `${row.ward}-${row.precinct}`;
+    let agg = byPrecinct.get(key);
+    if (!agg) {
+      agg = {
+        ward: row.ward,
+        precinct: row.precinct,
+        registered: 0,
+        ballots: 0,
+        votes: new Map(),
+        geom: row.geom_geojson,
+      };
+      byPrecinct.set(key, agg);
+    }
+    agg.registered = Math.max(agg.registered, Number(row.registered) || 0);
+    agg.ballots = Math.max(agg.ballots, Number(row.ballots) || 0);
+    agg.votes.set(
+      row.candidate_name,
+      (agg.votes.get(row.candidate_name) ?? 0) + Number(row.votes || 0),
+    );
+    if (!agg.geom && row.geom_geojson) agg.geom = row.geom_geojson;
+  }
+
+  if ([...byPrecinct.values()].every((a) => !a.geom)) {
+    // Fall back to ward shapes colored by ward-race winner.
+    return bqCouncilCitywideWardFallback(electionId, contestId, election);
+  }
+
+  const features: GeoJSON.Feature[] = [];
+  let totalBallots = 0;
+  let totalRegistered = 0;
+  const seenTurnout = new Set<string>();
+  const legendNames: string[] = [];
+
+  for (const agg of byPrecinct.values()) {
+    const wardCandidates = election.councilWards[String(agg.ward)] ?? [
+      ...agg.votes.keys(),
+    ];
+    const ranked = wardCandidates
+      .map((name) => ({ name, votes: agg.votes.get(name) ?? 0 }))
+      .map((c, _, arr) => {
+        const sum = arr.reduce((a, x) => a + x.votes, 0);
+        return { ...c, share: sum ? c.votes / sum : 0 };
+      })
+      .sort((a, b) => b.votes - a.votes);
+    const winner = ranked[0]?.votes ? ranked[0].name : null;
+    const turnKey = `${agg.ward}-${agg.precinct}`;
+    if (!seenTurnout.has(turnKey)) {
+      seenTurnout.add(turnKey);
+      totalBallots += agg.ballots;
+      totalRegistered += agg.registered;
+    }
+    if (winner && !legendNames.includes(winner)) legendNames.push(winner);
+    if (!agg.geom) continue;
+    features.push({
+      type: "Feature",
+      geometry: JSON.parse(agg.geom) as GeoJSON.Geometry,
+      properties: {
+        id: `ward-${agg.ward}-pct-${agg.precinct}`,
+        ward: agg.ward,
+        precinct: agg.precinct,
+        registered: agg.registered,
+        ballots: agg.ballots,
+        turnout: agg.registered ? agg.ballots / agg.registered : 0,
+        winner,
+        winnerShare: ranked[0]?.share ?? 0,
+        winnerColor: winner
+          ? colorForCandidate(winner, wardCandidates)
+          : "#2a3340",
+        inactive: !winner,
+        candidates: ranked,
+      },
+    });
+  }
+
+  // Recompute ward winners from full ward vote totals for the summary list.
+  const wardTotals = new Map<number, Map<string, number>>();
+  for (const agg of byPrecinct.values()) {
+    let votes = wardTotals.get(agg.ward);
+    if (!votes) {
+      votes = new Map();
+      wardTotals.set(agg.ward, votes);
+    }
+    for (const [name, v] of agg.votes) {
+      votes.set(name, (votes.get(name) ?? 0) + v);
+    }
+  }
+  const wardSummaries = [...wardTotals.entries()]
+    .map(([w, votes]) => {
+      const cands = election.councilWards[String(w)] ?? [...votes.keys()];
+      const ranked = cands
+        .map((name) => ({ name, votes: votes.get(name) ?? 0 }))
+        .sort((a, b) => b.votes - a.votes);
+      const sum = ranked.reduce((a, c) => a + c.votes, 0);
+      const top = ranked[0];
+      return {
+        name: top?.votes ? `Ward ${w} · ${top.name}` : `Ward ${w}`,
+        votes: top?.votes ?? 0,
+        share: sum && top ? top.votes / sum : 0,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+  const wardBoundaries = await bqWardBoundaries(electionId, null).catch(
+    () => EMPTY_FC,
+  );
+
+  return {
+    source: "bigquery",
+    electionId,
+    contestId,
+    geography: "precinct",
+    features: { type: "FeatureCollection", features },
+    wardBoundaries,
+    legend: legendForCandidates(legendNames.slice(0, 12)),
+    summary: {
+      totalBallots,
+      totalRegistered,
+      citywide: wardSummaries,
+    },
+  };
+}
+
+async function bqCouncilCitywideWardFallback(
+  electionId: string,
+  contestId: string,
+  election: ElectionSummary,
+): Promise<MapPayload> {
+  const rows = await query<{
+    ward: number;
+    precinct: number | null;
+    registered: number;
+    ballots: number;
+    candidate_name: string;
+    votes: number;
+    geom_geojson: string | null;
+  }>(
+    `
+    SELECT
+      r.ward,
+      r.precinct,
+      r.registered_voters AS registered,
+      r.ballots_cast AS ballots,
+      r.candidate_name,
+      r.votes,
+      ST_ASGEOJSON(g.geom) AS geom_geojson
+    FROM ${fq("results")} r
+    LEFT JOIN ${fq("geographies")} g
+      ON g.election_id = r.election_id
+     AND g.ward = r.ward
+     AND g.geography_level = 'ward'
+    WHERE r.election_id = @electionId
+      AND r.office = 'alderman'
+    `,
+    { electionId },
+  );
+
+  type Agg = {
+    ward: number;
+    registered: number;
+    ballots: number;
+    votes: Map<string, number>;
+    geom: string | null;
+  };
+  const byWard = new Map<number, Agg>();
+  for (const row of rows) {
+    let agg = byWard.get(row.ward);
+    if (!agg) {
+      agg = {
+        ward: row.ward,
+        registered: 0,
+        ballots: 0,
+        votes: new Map(),
+        geom: row.geom_geojson,
+      };
+      byWard.set(row.ward, agg);
+    }
+    agg.registered = Math.max(agg.registered, Number(row.registered) || 0);
+    agg.ballots = Math.max(agg.ballots, Number(row.ballots) || 0);
+    agg.votes.set(
+      row.candidate_name,
+      (agg.votes.get(row.candidate_name) ?? 0) + Number(row.votes || 0),
+    );
+    if (!agg.geom && row.geom_geojson) agg.geom = row.geom_geojson;
+  }
+
+  const features: GeoJSON.Feature[] = [];
+  const legendNames: string[] = [];
+  let totalBallots = 0;
+  let totalRegistered = 0;
+  const wardSummaries: { name: string; votes: number; share: number }[] = [];
+
+  for (const agg of [...byWard.values()].sort((a, b) => a.ward - b.ward)) {
+    const cands = election.councilWards[String(agg.ward)] ?? [...agg.votes.keys()];
+    const ranked = cands
+      .map((name) => ({ name, votes: agg.votes.get(name) ?? 0 }))
+      .map((c, _, arr) => {
+        const sum = arr.reduce((a, x) => a + x.votes, 0);
+        return { ...c, share: sum ? c.votes / sum : 0 };
+      })
+      .sort((a, b) => b.votes - a.votes);
+    const winner = ranked[0]?.votes ? ranked[0].name : null;
+    totalBallots += agg.ballots;
+    totalRegistered += agg.registered;
+    if (winner && ranked[0]) {
+      if (!legendNames.includes(winner)) legendNames.push(winner);
+      wardSummaries.push({
+        name: `Ward ${agg.ward} · ${winner}`,
+        votes: ranked[0].votes,
+        share: ranked[0].share,
+      });
+    }
+    if (!agg.geom) continue;
+    features.push({
+      type: "Feature",
+      geometry: JSON.parse(agg.geom) as GeoJSON.Geometry,
+      properties: {
+        id: `ward-${agg.ward}`,
+        ward: agg.ward,
+        precinct: null,
+        registered: agg.registered,
+        ballots: agg.ballots,
+        turnout: agg.registered ? agg.ballots / agg.registered : 0,
+        winner,
+        winnerShare: ranked[0]?.share ?? 0,
+        winnerColor: winner ? colorForCandidate(winner, cands) : "#2a3340",
+        inactive: !winner,
+        candidates: ranked,
+      },
+    });
+  }
+
+  return {
+    source: "bigquery",
+    electionId,
+    contestId,
+    geography: "ward",
+    features: { type: "FeatureCollection", features },
+    wardBoundaries: {
+      type: "FeatureCollection",
+      features: features.map((f) => ({
+        type: "Feature" as const,
+        geometry: f.geometry,
+        properties: {
+          ward: f.properties?.ward ?? null,
+          id: `ward-boundary-${f.properties?.ward ?? ""}`,
+        },
+      })),
+    },
+    legend: legendForCandidates(legendNames.slice(0, 12)),
+    summary: { totalBallots, totalRegistered, citywide: wardSummaries },
   };
 }
 

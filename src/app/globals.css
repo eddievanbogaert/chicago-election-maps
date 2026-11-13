@@ -139,6 +139,10 @@ body {
     transform 560ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.atlas-hero-copy {
+  max-width: 34rem;
+}
+
 .atlas-brand {
   margin: 0 0 0.7rem;
   font-family: var(--font-display);
@@ -504,13 +508,56 @@ body {
   }
 
   .atlas-hero-overlay {
-    left: max(1rem, var(--safe-left));
-    right: max(1rem, var(--safe-right));
+    left: 0;
+    right: 0;
+    top: 0;
+    max-width: none;
+    padding:
+      calc(0.9rem + var(--safe-top))
+      max(1rem, var(--safe-right))
+      1.85rem
+      max(1rem, var(--safe-left));
+    background:
+      linear-gradient(
+        180deg,
+        rgba(5, 8, 12, 0.94) 0%,
+        rgba(5, 8, 12, 0.82) 58%,
+        rgba(5, 8, 12, 0.35) 88%,
+        rgba(5, 8, 12, 0) 100%
+      );
+    backdrop-filter: blur(8px) saturate(1.05);
+    -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  }
+
+  .atlas-hero-copy {
     max-width: none;
   }
 
   .atlas-brand {
     font-size: clamp(1.9rem, 9vw, 2.6rem);
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.55),
+      0 8px 28px rgba(0, 0, 0, 0.8);
+  }
+
+  .atlas-hero-overlay h1 {
+    max-width: 22ch;
+    color: #f8fafc;
+    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.85);
+  }
+
+  .atlas-lede {
+    max-width: 40ch;
+    color: rgba(232, 238, 246, 0.9);
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.75);
+  }
+
+  .atlas-source-chip {
+    color: rgba(232, 238, 246, 0.78);
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    padding: 0.4rem 0.65rem;
+    border-radius: 999px;
   }
 
   .atlas-shell.is-entered .atlas-hero-overlay {
