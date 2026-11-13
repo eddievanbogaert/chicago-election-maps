@@ -1,23 +1,34 @@
-import type { Metadata } from "next";
-import { Newsreader, Public_Sans } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { DM_Sans, Outfit } from "next/font/google";
 import "./globals.css";
 
-const newsreader = Newsreader({
-  variable: "--font-newsreader",
+const outfit = Outfit({
+  variable: "--font-outfit",
   subsets: ["latin"],
   display: "swap",
+  preload: true,
+  weight: ["400", "500", "600", "700"],
 });
 
-const publicSans = Public_Sans({
-  variable: "--font-public-sans",
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
   subsets: ["latin"],
   display: "swap",
+  preload: true,
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
   title: "Chicago Election Atlas",
   description:
-    "Interactive maps of Chicago municipal elections (2015, 2019, 2023) and demographic explorer.",
+    "Precinct-level maps of Chicago municipal elections (2015, 2019, 2023) and ACS demographics.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#070a0f",
 };
 
 export default function RootLayout({
@@ -26,10 +37,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${newsreader.variable} ${publicSans.variable}`}>
-        {children}
-      </body>
+    <html lang="en" className={`${outfit.variable} ${dmSans.variable}`}>
+      <body className={dmSans.className}>{children}</body>
     </html>
   );
 }

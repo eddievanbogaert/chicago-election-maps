@@ -26,7 +26,8 @@ export function AtlasApp() {
   const [elections, setElections] = useState<ElectionSummary[]>([]);
   const [electionId, setElectionId] = useState<string>("2023-runoff");
   const [mode, setMode] = useState<AtlasMode>("mayor");
-  const [ward, setWard] = useState<number>(1);
+  /** null = citywide council view until a ward is chosen */
+  const [ward, setWard] = useState<number | null>(null);
   const [contests, setContests] = useState<ContestSummary[]>([]);
   const [contestId, setContestId] = useState<string>("");
   const [mapData, setMapData] = useState<MapPayload | null>(null);
@@ -35,6 +36,8 @@ export function AtlasApp() {
   const [backend, setBackend] = useState<string>("sample");
   const [error, setError] = useState<string | null>(null);
   const [entered, setEntered] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [showCommunityAreas, setShowCommunityAreas] = useState(false);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -60,13 +63,21 @@ export function AtlasApp() {
 
   useEffect(() => {
     if (!electionId || mode === "demographics") return;
+
+    // Council citywide: synthetic contest id, no ward filter.
+    if (mode === "council" && ward == null) {
+      setContests([]);
+      setContestId(`${electionId}:alderman`);
+      return;
+    }
+
     startTransition(() => {
       void (async () => {
         const qs = new URLSearchParams({
           electionId,
           mode: mode === "council" ? "council" : "mayor",
         });
-        if (mode === "council") qs.set("ward", String(ward));
+        if (mode === "council" && ward != null) qs.set("ward", String(ward));
         const res = await fetch(`/api/contests?${qs}`);
         const data = await res.json();
         const list: ContestSummary[] = data.contests ?? [];
@@ -92,16 +103,20 @@ export function AtlasApp() {
       return;
     }
     if (!contestId) return;
+    const requested = contestId;
+    setMapData(null);
     startTransition(() => {
       void (async () => {
         const res = await fetch(
-          `/api/map?contestId=${encodeURIComponent(contestId)}`,
+          `/api/map?contestId=${encodeURIComponent(requested)}`,
         );
         if (!res.ok) {
           setError("Map query failed.");
           return;
         }
-        setMapData(await res.json());
+        const payload = (await res.json()) as MapPayload;
+        if (payload.contestId !== requested) return;
+        setMapData(payload);
         setError(null);
       })();
     });
@@ -109,8 +124,16 @@ export function AtlasApp() {
 
   const features =
     mode === "demographics" ? (demoData?.features ?? null) : (mapData?.features ?? null);
+  const wardBoundaries =
+    mode === "demographics" ? null : (mapData?.wardBoundaries ?? null);
   const legend = mode === "demographics" ? null : (mapData?.legend ?? null);
-  const sourceLabel = mode === "demographics" ? demoData?.source : mapData?.source;
+  const geographyLabel =
+    mode === "demographics"
+      ? "census tracts"
+      : mapData?.geography === "precinct"
+        ? "precincts"
+        : "wards";
+  const councilCitywide = mode === "council" && ward == null;
 
   const election = useMemo(
     () => elections.find((e) => e.id === electionId) ?? null,
@@ -124,42 +147,98 @@ export function AtlasApp() {
       .sort((a, b) => a - b);
   }, [election]);
 
+  // Drop a stale ward if it isn't on this election's council slate.
+  useEffect(() => {
+    if (ward == null || !wardOptions.length) return;
+    if (!wardOptions.includes(ward)) setWard(null);
+  }, [wardOptions, ward]);
+
+  const enter = () => {
+    setEntered(true);
+    setPanelOpen(true);
+  };
+
+  const selectMode = (next: AtlasMode) => {
+    setMode(next);
+    if (next === "council") setWard(null);
+  };
+
+  useEffect(() => {
+    if (entered || !features?.features?.length) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") enter();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [entered, features]);
+
   return (
-    <div className={`atlas-shell ${entered ? "is-entered" : ""}`}>
-      <div className="atlas-map-plane">
+    <div
+      className={`atlas-shell ${entered ? "is-entered" : ""} ${panelOpen ? "is-panel-open" : "is-panel-collapsed"}`}
+    >
+      <div
+        className="atlas-map-plane"
+        onPointerDownCapture={!entered ? enter : undefined}
+      >
         <ElectionMap
           features={features}
+          wardBoundaries={wardBoundaries}
+          showCommunityAreas={showCommunityAreas}
           mode={mode === "demographics" ? "demographics" : "election"}
         />
+        {entered && pending && (
+          <div className="atlas-map-loading" role="status" aria-live="polite">
+            <span className="atlas-loading-spinner" aria-hidden />
+            <span>Updating map…</span>
+          </div>
+        )}
       </div>
 
       <header className="atlas-hero-overlay">
-        <p className="atlas-brand">Chicago Election Atlas</p>
-        <h1>See how the city voted — ward by ward.</h1>
-        <p className="atlas-lede">
-          2015, 2019, and 2023 municipal generals and runoffs, with a
-          demographic explorer powered by ACS estimates.
-        </p>
-        <div className="atlas-cta-row">
-          <button
-            type="button"
-            className="atlas-cta"
-            onClick={() => setEntered(true)}
-          >
-            Explore the map
-          </button>
-          <span className="atlas-source-chip">
-            {backend === "bigquery" ? "Live BigQuery" : "Sample ward data"}
-          </span>
+        <div className="atlas-hero-copy">
+          <p className="atlas-brand">Chicago Election Atlas</p>
+          <h1>Precinct-level results for mayor and council.</h1>
+          <p className="atlas-lede">
+            2015, 2019, and 2023 municipal generals and runoffs — plus ACS
+            demographics on a dark, mobile-ready map.
+          </p>
+          <div className="atlas-cta-row">
+            <button
+              type="button"
+              className="atlas-cta"
+              onClick={enter}
+              onPointerUp={(e) => {
+                e.stopPropagation();
+                enter();
+              }}
+            >
+              Explore the map
+            </button>
+            <span className="atlas-source-chip">
+              {backend === "sample" ? "Sample preview data" : "Precinct returns · live"}
+            </span>
+          </div>
         </div>
       </header>
 
-      <aside className="atlas-panel" aria-hidden={!entered}>
+      {entered && (
+        <button
+          type="button"
+          className="atlas-panel-toggle"
+          aria-expanded={panelOpen}
+          onClick={() => setPanelOpen((v) => !v)}
+        >
+          {panelOpen ? "Hide controls" : "Show controls"}
+        </button>
+      )}
+
+      <aside className="atlas-panel" aria-hidden={!entered || !panelOpen}>
+        <div className="atlas-panel-handle" aria-hidden />
         <header className="atlas-panel-head">
           <h2>Explore</h2>
           <p>
-            Mayor or council races, first rounds and runoffs. Zoom the map;
-            hover a ward for detail.
+            Tap a precinct for the winner. Council starts citywide — choose a
+            ward to zoom into that race.
           </p>
         </header>
 
@@ -177,7 +256,7 @@ export function AtlasApp() {
               role="tab"
               aria-selected={mode === id}
               className={mode === id ? "is-active" : ""}
-              onClick={() => setMode(id)}
+              onClick={() => selectMode(id)}
             >
               {label}
             </button>
@@ -204,9 +283,12 @@ export function AtlasApp() {
               <label className="atlas-field">
                 <span>Ward</span>
                 <select
-                  value={ward}
-                  onChange={(e) => setWard(Number(e.target.value))}
+                  value={ward == null ? "" : String(ward)}
+                  onChange={(e) =>
+                    setWard(e.target.value === "" ? null : Number(e.target.value))
+                  }
                 >
+                  <option value="">All wards</option>
                   {wardOptions.map((w) => (
                     <option key={w} value={w}>
                       Ward {w}
@@ -231,6 +313,7 @@ export function AtlasApp() {
                 </select>
               </label>
             )}
+
           </>
         ) : (
           <label className="atlas-field">
@@ -248,23 +331,54 @@ export function AtlasApp() {
           </label>
         )}
 
-        {error && <p className="atlas-error">{error}</p>}
-        {pending && <p className="atlas-status">Updating map…</p>}
+        <label className="atlas-toggle">
+          <input
+            type="checkbox"
+            checked={showCommunityAreas}
+            onChange={(e) => setShowCommunityAreas(e.target.checked)}
+          />
+          <span>Community area boundaries</span>
+        </label>
 
-        {mode !== "demographics" && mapData && (
+        {error && <p className="atlas-error">{error}</p>}
+
+        {(pending || (mode !== "demographics" && !mapData && !error) || (mode === "demographics" && !demoData && !error)) && (
+          <div className="atlas-loading" role="status" aria-live="polite">
+            <span className="atlas-loading-spinner" aria-hidden />
+            <p>Loading {geographyLabel}…</p>
+          </div>
+        )}
+
+        {mode !== "demographics" && mapData && !pending && (
           <div className="atlas-summary">
-            <h3>Citywide</h3>
+            <h3>
+              {mode === "council"
+                ? councilCitywide
+                  ? "Citywide council"
+                  : `Ward ${ward}`
+                : "Citywide"}
+            </h3>
             <p className="atlas-muted">
               {mapData.summary.totalBallots.toLocaleString()} ballots
               {mapData.summary.totalRegistered
                 ? ` · ${((mapData.summary.totalBallots / mapData.summary.totalRegistered) * 100).toFixed(1)}% turnout`
                 : ""}
+              {` · ${mapData.features.features.length.toLocaleString()} ${geographyLabel}`}
             </p>
+            {councilCitywide && (
+              <p className="atlas-note">
+                Colored by each ward’s race winner. Choose a ward for the full
+                ballot.
+              </p>
+            )}
             <ol className="atlas-results">
-              {mapData.summary.citywide.slice(0, 8).map((c) => (
+              {mapData.summary.citywide.slice(0, councilCitywide ? 12 : 8).map((c) => (
                 <li key={c.name}>
                   <span>{c.name}</span>
-                  <strong>{(c.share * 100).toFixed(1)}%</strong>
+                  <span className="atlas-result-stats">
+                    <em>{c.votes.toLocaleString()}</em>
+                    <strong>{(c.share * 100).toFixed(1)}%</strong>
+                  </span>
                 </li>
               ))}
             </ol>
@@ -278,14 +392,15 @@ export function AtlasApp() {
               {formatRange(metric, demoData.range.min)} –{" "}
               {formatRange(metric, demoData.range.max)}
             </p>
-            <p className="atlas-note">
-              Sample mode uses ward proxies. Wire BigQuery for tract-level ACS
-              5-year estimates.
-            </p>
+            {demoData.source === "sample" && (
+              <p className="atlas-note">
+                Showing sample ward proxies until live ACS tracts are available.
+              </p>
+            )}
           </div>
         )}
 
-        {legend && (
+        {legend && !councilCitywide && (
           <div className="atlas-legend">
             <h3>Winner</h3>
             <ul>
@@ -301,8 +416,9 @@ export function AtlasApp() {
 
         <footer className="atlas-foot">
           <p>
-            Chicago Board of Elections precinct results · backend{" "}
-            {sourceLabel ?? backend}
+            {mode === "demographics"
+              ? "U.S. Census ACS 5-year estimates · Chicago tracts"
+              : `Chicago Board of Elections · ${geographyLabel} with ward boundaries`}
           </p>
         </footer>
       </aside>

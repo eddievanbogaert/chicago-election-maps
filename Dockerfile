@@ -2,14 +2,16 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# Skip postinstall here — scripts/ and maplibre aren't in this layer yet.
+RUN npm ci --ignore-scripts
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# Ensure MapLibre worker exists (also committed under public/)
+RUN node scripts/copy-maplibre-worker.mjs && npm run build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
