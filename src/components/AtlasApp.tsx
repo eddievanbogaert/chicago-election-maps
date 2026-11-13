@@ -93,16 +93,21 @@ export function AtlasApp() {
       return;
     }
     if (!contestId) return;
+    const requested = contestId;
+    setMapData(null);
     startTransition(() => {
       void (async () => {
         const res = await fetch(
-          `/api/map?contestId=${encodeURIComponent(contestId)}`,
+          `/api/map?contestId=${encodeURIComponent(requested)}`,
         );
         if (!res.ok) {
           setError("Map query failed.");
           return;
         }
-        setMapData(await res.json());
+        const payload = (await res.json()) as MapPayload;
+        // Ignore stale responses if the user switched contests mid-flight.
+        if (payload.contestId !== requested) return;
+        setMapData(payload);
         setError(null);
       })();
     });
