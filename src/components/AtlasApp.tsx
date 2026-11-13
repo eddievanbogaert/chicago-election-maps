@@ -348,8 +348,7 @@ export function AtlasApp() {
             </p>
             {demoData.source === "sample" && (
               <p className="atlas-note">
-                Showing sample ward proxies. Connect BigQuery for tract-level
-                ACS.
+                Showing sample ward proxies until live ACS tracts are available.
               </p>
             )}
           </div>
