@@ -168,6 +168,12 @@ export function AtlasApp() {
           features={features}
           mode={mode === "demographics" ? "demographics" : "election"}
         />
+        {entered && pending && (
+          <div className="atlas-map-loading" role="status" aria-live="polite">
+            <span className="atlas-loading-spinner" aria-hidden />
+            <span>Updating map…</span>
+          </div>
+        )}
       </div>
 
       <header className="atlas-hero-overlay">
@@ -304,9 +310,15 @@ export function AtlasApp() {
         )}
 
         {error && <p className="atlas-error">{error}</p>}
-        {pending && <p className="atlas-status">Updating map…</p>}
 
-        {mode !== "demographics" && mapData && (
+        {(pending || (mode !== "demographics" && !mapData && !error) || (mode === "demographics" && !demoData && !error)) && (
+          <div className="atlas-loading" role="status" aria-live="polite">
+            <span className="atlas-loading-spinner" aria-hidden />
+            <p>Loading {geographyLabel}…</p>
+          </div>
+        )}
+
+        {mode !== "demographics" && mapData && !pending && (
           <div className="atlas-summary">
             <h3>{mode === "council" ? `Ward ${ward}` : "Citywide"}</h3>
             <p className="atlas-muted">
